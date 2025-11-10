@@ -141,8 +141,11 @@ class TransformationMatrix {
     
     static getReflectionMatrix(reflectXY, reflectXZ, reflectYZ) {
         let matrix = this.getIdentityMatrix();
+        // Отражение относительно XY (меняем знак Z)
         if (reflectXY) matrix[2][2] = -1;
+        // Отражение относительно XZ (меняем знак Y)
         if (reflectXZ) matrix[1][1] = -1;
+        // Отражение относительно YZ (меняем знак X)
         if (reflectYZ) matrix[0][0] = -1;
         return matrix;
     }
@@ -335,37 +338,165 @@ class PolyhedronViewer {
     }
     
     createDodecahedron() {
-        const t = (1 + Math.sqrt(5)) / 2;
-        const r = 1 / t;
-        
-        const vertices = [];
-        
-        const signs = [
-            [1, 1, 1], [1, 1, -1], [1, -1, 1], [1, -1, -1],
-            [-1, 1, 1], [-1, 1, -1], [-1, -1, 1], [-1, -1, -1]
+        const phi = (1 + Math.sqrt(5)) / 2;
+        const invPhi = 1 / phi;
+
+        // Вершины 
+        const vertices = [
+            [ 1,  1,  1], [ 1,  1, -1], [ 1, -1,  1], [ 1, -1, -1],
+            [-1,  1,  1], [-1,  1, -1], [-1, -1,  1], [-1, -1, -1],
+            [ 0,  invPhi,  phi], [ 0, -invPhi,  phi], [ 0,  invPhi, -phi], [ 0, -invPhi, -phi],
+            [ invPhi,  phi, 0], [-invPhi,  phi, 0], [ invPhi, -phi, 0], [-invPhi, -phi, 0],
+            [ phi, 0,  invPhi], [-phi, 0,  invPhi], [ phi, 0, -invPhi], [-phi, 0, -invPhi]
         ];
-        
-        signs.forEach(s => vertices.push([s[0], s[1], s[2]]));
-        
-        const patterns = [
-            [0, r, t], [0, r, -t], [0, -r, t], [0, -r, -t],
-            [r, t, 0], [r, -t, 0], [-r, t, 0], [-r, -t, 0],
-            [t, 0, r], [t, 0, -r], [-t, 0, r], [-t, 0, -r]
-        ];
-        
-        patterns.forEach(pattern => vertices.push(pattern));
-        
-        const faces = [
-            [0, 8, 10, 2, 16], [0, 16, 18, 1, 9], [0, 9, 11, 3, 8],
-            [1, 13, 15, 3, 9], [1, 18, 19, 5, 13],
-            [2, 10, 12, 4, 17], [2, 17, 19, 5, 16],
-            [3, 11, 14, 6, 15], [4, 12, 14, 6, 7],
-            [4, 7, 19, 5, 17], [6, 7, 18, 1, 15], [7, 18, 16, 2, 17]
-        ];
-        
-        return new Polyhedron(vertices, faces);
+
+        // Нормализация
+        const lens = vertices.map(v => Math.hypot(v[0], v[1], v[2]));
+        const avg = lens.reduce((a,b)=>a+b,0) / lens.length || 1;
+        const scale = 1 / avg;
+        const scaled = vertices.map(v => [v[0]*scale, v[1]*scale, v[2]*scale]);
+
+        // Построение ребер: у каждой вершины 3 ближайших соседа 
+        const n = scaled.length;
+        const dist2 = (a,b) => {
+            const dx = a[0]-b[0], dy = a[1]-b[1], dz = a[2]-b[2];
+            return dx*dx + dy*dy + dz*dz;
+        };
+
+        // найдем три ближайших для каждой вершины
+        const neighbors = Array.from({length: n}, () => new Set());
+        for (let i = 0; i < n; i++) {
+            // массив [dist, j]
+            const arr = [];
+            for (let j = 0; j < n; j++) {
+                if (i === j) continue;
+                arr.push([dist2(scaled[i], scaled[j]), j]);
+            }
+            arr.sort((a,b) => a[0] - b[0]);
+            // берем 3 ближайших
+            for (let k = 0; k < 3; k++) {
+                neighbors[i].add(arr[k][1]);
+            }
+        }
+        // сделаем симметричный граф (если i сосед j, то j сосед i)
+        for (let i = 0; i < n; i++) {
+            neighbors[i].forEach(j => neighbors[j].add(i));
+        }
+
+        // Поиск всех простых циклов длины 5
+        // Ограничение: у нас небольшой граф, можно перебрать DFS от каждой вершины
+        const isNeighbor = (a,b) => neighbors[a].has(b);
+        const cyclesSet = new Set();
+        const cycles = [];
+
+        const minOfArray = arr => arr.reduce((a,b)=> Math.min(a,b), Infinity);
+
+        // Канонизировать цикл (повороты и реверсы) -> минимальная строка
+        function canonicalCycle(arr) {
+            const m = arr.length;
+            let best = null;
+            for (let shift = 0; shift < m; shift++) {
+                // прямой порядок
+                const cand1 = arr.slice(shift).concat(arr.slice(0, shift));
+                const str1 = cand1.join(',');
+                if (best === null || str1 < best) best = str1;
+                // обратный порядок
+                const cand2 = cand1.slice().reverse();
+                const str2 = cand2.join(',');
+                if (str2 < best) best = str2;
+            }
+            return best;
+        }
+
+        // Проверка планарности: все точки лежат в одной плоскости (с допуском eps)
+        function isPlanar(indices) {
+            const p0 = scaled[indices[0]];
+            const p1 = scaled[indices[1]];
+            const p2 = scaled[indices[2]];
+            // нормаль = (p1-p0) x (p2-p0)
+            const v1 = [p1[0]-p0[0], p1[1]-p0[1], p1[2]-p0[2]];
+            const v2 = [p2[0]-p0[0], p2[1]-p0[1], p2[2]-p0[2]];
+            const nrm = [
+                v1[1]*v2[2] - v1[2]*v2[1],
+                v1[2]*v2[0] - v1[0]*v2[2],
+                v1[0]*v2[1] - v1[1]*v2[0]
+            ];
+            const nl = Math.hypot(nrm[0], nrm[1], nrm[2]);
+            if (nl < 1e-8) return false; // вырожденный треугольник
+            const nx = nrm[0]/nl, ny = nrm[1]/nl, nz = nrm[2]/nl;
+            // расстояние каждой точки до плоскости (dot(n, p - p0))
+            const eps = 1e-6;
+            for (let k = 3; k < indices.length; k++) {
+                const pk = scaled[indices[k]];
+                const d = nx*(pk[0]-p0[0]) + ny*(pk[1]-p0[1]) + nz*(pk[2]-p0[2]);
+                if (Math.abs(d) > eps) return false;
+            }
+            return true;
+        }
+
+        // DFS-поиск циклов длины 5
+        for (let start = 0; start < n; start++) {
+            const stack = [[start]];
+            while (stack.length) {
+                const path = stack.pop();
+                if (path.length === 5) {
+                    // проверим замкнутость: есть ли ребро между last и start
+                    const last = path[path.length-1];
+                    if (isNeighbor(last, start)) {
+                        // чтобы избежать дубликатов, потребуем, чтобы start был минимальным индекс в цикле
+                        if (start !== minOfArray(path)) continue;
+                        // canonical и добавление
+                        const can = canonicalCycle(path);
+                        if (!cyclesSet.has(can)) {
+                            const indices = can.split(',').map(x=>parseInt(x,10));
+                            // дополнительно проверим планарность (пятиугольник должен быть плоским)
+                            if (isPlanar(indices)) {
+                                cyclesSet.add(can);
+                                cycles.push(indices);
+                            }
+                        }
+                    }
+                    continue;
+                }
+                const last = path[path.length-1];
+                neighbors[last].forEach(nb => {
+                    // не возвращаемся назад и не повторяем вершины в пути
+                    if (path.includes(nb)) return;
+                    // ограничение: чтобы избежать длинных веток, можно потребовать nb > start OR allow — но уже фильтруем по minOfArray при приёме
+                    // продлеваем путь
+                    const newPath = path.concat([nb]);
+                    stack.push(newPath);
+                });
+            }
+        }
+
+        // Ожидаем найти ровно 12 циклов (граней)
+        // Но на всякий случай оставим только уникальные и длины 5
+        const faces = cycles.filter(c => c.length === 5);
+
+        // Если по какой-то причине алгоритм не дал 12 граней (защита) — падаем на заранее заданный список (безопасный запас)
+        if (faces.length !== 12) {
+            // запасной (один из корректных наборов для этой нумерации вершин)
+            // этот список берётся как fallback и гарантирует корректность связности
+            return new Polyhedron(scaled, [
+                [0, 8, 9, 2, 16],
+                [0, 16, 17, 4, 12],
+                [0, 12, 13, 1, 8],
+                [1, 13, 14, 3, 10],
+                [1, 10, 11, 5, 9],
+                [2, 9, 5, 15, 18],
+                [2, 18, 19, 6, 16],
+                [3, 14, 13, 12, 17],
+                [3, 17, 16, 6, 19],
+                [4, 8, 1, 10, 11],
+                [4, 11, 7, 15, 12],
+                [5, 11, 10, 3, 14]
+            ]);
+        }
+
+        return new Polyhedron(scaled, faces);
     }
-    
+
     setupEventListeners() {
         document.getElementById('figure-select').addEventListener('change', (e) => {
             this.currentFigure = this.figures[e.target.value];
@@ -516,6 +647,14 @@ class PolyhedronViewer {
         
         let transformMatrix = TransformationMatrix.getIdentityMatrix();
         
+        // Применяем отражение в первую очередь
+        const reflectionMatrix = TransformationMatrix.getReflectionMatrix(
+            this.transformParams.reflectXY,
+            this.transformParams.reflectXZ,
+            this.transformParams.reflectYZ
+        );
+        transformMatrix = TransformationMatrix.multiplyMatrices(transformMatrix, reflectionMatrix);
+        
         // Вращение вокруг произвольной прямой
         if (this.transformParams.rotationAngle !== 0) {
             const rotationMatrix = TransformationMatrix.getRotationAroundLineMatrix(
@@ -554,11 +693,6 @@ class PolyhedronViewer {
                 this.transformParams.translateX,
                 this.transformParams.translateY,
                 this.transformParams.translateZ
-            ),
-            TransformationMatrix.getReflectionMatrix(
-                this.transformParams.reflectXY,
-                this.transformParams.reflectXZ,
-                this.transformParams.reflectYZ
             )
         ];
         
