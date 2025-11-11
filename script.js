@@ -173,6 +173,7 @@ class TransformationMatrix {
         const length = Math.sqrt(u*u + v*v + w*w);
         if (length === 0) return this.getIdentityMatrix();
         
+        // Нормализация до единичного вектора
         const l = u / length;
         const m = v / length;
         const n = w / length;
@@ -181,7 +182,11 @@ class TransformationMatrix {
         const sinA = Math.sin(angle);
         const oneMinusCosA = 1 - cosA;
         
-        // Матрица вращения Родригеса
+        // 3. Выполнить поворот объекта вокруг прямой L
+        // Матрица вращения Родригеса (результирующая матрица)
+        // [ l²(1-cosθ)+cosθ    lm(1-cosθ)-nsinθ   ln(1-cosθ)+msinθ ]
+        // [ lm(1-cosθ)+nsinθ   m²(1-cosθ)+cosθ    mn(1-cosθ)-lsinθ ]
+        // [ ln(1-cosθ)-msinθ   mn(1-cosθ)+lsinθ   n²(1-cosθ)+cosθ  ]
         const rotationMatrix = [
             [
                 l*l*oneMinusCosA + cosA,
@@ -205,10 +210,16 @@ class TransformationMatrix {
         ];
         
         // Комбинируем с трансляцией к началу координат и обратно
+
+        // 1. Перенести прямую L в центр координат на –А (-a,-b,-c) 
         const toOrigin = this.getTranslationMatrix(-ax, -ay, -az);
+        
+        // 5. Выполнить перенос на А (a, b, c) 
         const fromOrigin = this.getTranslationMatrix(ax, ay, az);
         
+        // 3. Совместить прямую L с одной из координатных осей
         let matrix = this.multiplyMatrices(toOrigin, rotationMatrix);
+        // Обратный перенос
         return this.multiplyMatrices(matrix, fromOrigin);
     }
     
@@ -218,7 +229,7 @@ class TransformationMatrix {
         let pointOnLine;
         switch(axis) {
             case 'x':
-                pointOnLine = new Point3D(center.x, center.y + offsetY, center.z + offsetZ);
+                pointOnLine = new Point3D(center.x, center.y + offsetY, center.z + offsetZ); // x оставляем как у центра, но смещаем y и z (offsetY, offsetZ)
                 break;
             case 'y':
                 pointOnLine = new Point3D(center.x + offsetY, center.y, center.z + offsetZ);
@@ -256,18 +267,19 @@ class PolyhedronViewer {
         this.setupEventListeners();
         this.currentProjection = 'perspective';
         
+        // все параметры для аффинных преобразований
         this.transformParams = {
-            rotateX: 0, rotateY: 0, rotateZ: 0,
-            scale: 1,
-            translateX: 0, translateY: 0, translateZ: 0,
-            reflectXY: false, reflectXZ: false, reflectYZ: false,
-            lineA: new Point3D(0, 0, 0),
+            rotateX: 0, rotateY: 0, rotateZ: 0,     // Вращение вокруг осей
+            scale: 1,                               // Масштабирование
+            translateX: 0, translateY: 0, translateZ: 0, // Перенос
+            reflectXY: false, reflectXZ: false, reflectYZ: false, // Отражение
+            lineA: new Point3D(0, 0, 0),            // Точки для произвольной прямой
             lineB: new Point3D(1, 0, 0),
-            rotationAngle: 0,
-            parallelAxis: 'x',
-            parallelOffsetY: 0,
-            parallelOffsetZ: 0,
-            parallelRotationAngle: 0
+            rotationAngle: 0,                       // Угол вращения вокруг прямой
+            parallelAxis: 'x',                      // Ось для параллельного вращения
+            parallelOffsetY: 0, 
+            parallelOffsetZ: 0,                     // Смещение параллельной оси
+            parallelRotationAngle: 0                // Угол параллельного вращения
         };
         
         this.currentFigure = this.figures[2];
@@ -284,6 +296,7 @@ class PolyhedronViewer {
         };
     }
     
+    // Тетраэдр
     createTetrahedron() {
         const vertices = [
             [0, 0, Math.sqrt(8/3)], 
@@ -297,6 +310,7 @@ class PolyhedronViewer {
         return new Polyhedron(vertices, faces);
     }
     
+    // КУБ
     createCube() {
         const vertices = [
             [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
@@ -309,6 +323,7 @@ class PolyhedronViewer {
         return new Polyhedron(vertices, faces);
     }
     
+    // Октаэдр
     createOctahedron() {
         const vertices = [
             [0, 0, 1], [1, 0, 0], [0, 1, 0], 
@@ -321,6 +336,7 @@ class PolyhedronViewer {
         return new Polyhedron(vertices, faces);
     }
     
+    // Икосаэдр
     createIcosahedron() {
         const t = (1 + Math.sqrt(5)) / 2;
         const vertices = [
@@ -337,6 +353,7 @@ class PolyhedronViewer {
         return new Polyhedron(vertices, faces);
     }
     
+    // Додекаэдр
     createDodecahedron() {
         const phi = (1 + Math.sqrt(5)) / 2;
         const invPhi = 1 / phi;
